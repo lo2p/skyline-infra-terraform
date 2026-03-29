@@ -45,7 +45,7 @@ The repo root still contains the legacy combined root, but day-to-day work shoul
 
 ## Prerequisites
 
-- Terraform `1.14.7`
+- Terraform `1.14.x`
 - AWS credentials with permission to manage VPC, EC2, EKS, RDS, IAM, and SSM
 - an existing EC2 key pair in the target account and region
 - AWS CLI for kubeconfig and ECR login workflows
