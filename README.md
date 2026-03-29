@@ -120,7 +120,7 @@ The script will:
 
 - update kubeconfig for `root` and `ec2-user`
 - install or upgrade AWS Load Balancer Controller
-- install or upgrade External Secrets
+- install External Secrets CRDs and then install or upgrade External Secrets
 - create the `skyline` namespace
 - create a `SecretStore` and `ExternalSecret`
 - sync the existing SSM database parameters into the Kubernetes secret `skyline-db-secret`
@@ -147,6 +147,7 @@ After apply, verify from the admin EC2:
 ```bash
 sudo /usr/local/bin/skyline-setup-eks.sh
 kubectl get nodes
+kubectl get crd externalsecrets.external-secrets.io secretstores.external-secrets.io
 kubectl get deployment -n kube-system aws-load-balancer-controller
 kubectl get deployment -n external-secrets external-secrets
 kubectl get secret -n skyline skyline-db-secret
