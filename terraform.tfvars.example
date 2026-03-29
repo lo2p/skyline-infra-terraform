@@ -1,0 +1,12 @@
+aws_region               = "ap-northeast-2"
+key_pair_name            = "existing-keypair-name"
+admin_access_cidr        = "203.0.113.10/32"
+eks_public_access_cidrs  = ["203.0.113.10/32"]
+vpc_cidr                 = "10.20.0.0/16"
+public_subnet_cidrs      = ["10.20.0.0/24", "10.20.1.0/24"]
+private_eks_subnet_cidrs = ["10.20.10.0/24", "10.20.11.0/24"]
+private_db_subnet_cidrs  = ["10.20.20.0/24", "10.20.21.0/24"]
+parameter_store_prefix   = "/skyline-system-demo/demo"
+db_name                  = "skylineapp"
+db_username              = "skylineadmin"
+existing_ecr_repository_name = "skyline"

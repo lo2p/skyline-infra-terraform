@@ -1,0 +1,233 @@
+#!/bin/bash
+set -euo pipefail
+
+REGION="${aws_region}"
+CLUSTER_NAME="${cluster_name}"
+VPC_ID="${vpc_id}"
+PARAMETER_STORE_PREFIX="${parameter_store_prefix}"
+LOAD_BALANCER_CONTROLLER_ROLE_ARN="${load_balancer_controller_role_arn}"
+LOAD_BALANCER_CONTROLLER_ROLE_NAME="${load_balancer_controller_role_name}"
+EXTERNAL_SECRETS_ROLE_ARN="${external_secrets_role_arn}"
+EXTERNAL_SECRETS_ROLE_NAME="${external_secrets_role_name}"
+LINUX_USER="ec2-user"
+ROOT_KUBECONFIG="/root/.kube/config"
+USER_HOME="/home/$${LINUX_USER}"
+USER_KUBECONFIG="$${USER_HOME}/.kube/config"
+
+log() {
+  echo "[$(date -Iseconds)] $*"
+}
+
+resolve_iam_role_arn() {
+  local role_arn_input="$1"
+  local role_name_input="$2"
+
+  if [ -n "$${role_arn_input:-}" ] && [ "$role_arn_input" != "None" ]; then
+    printf '%s\n' "$role_arn_input"
+    return 0
+  fi
+
+  if [ -z "$${role_name_input:-}" ]; then
+    return 1
+  fi
+
+  local role_arn
+  role_arn="$(aws iam get-role \
+    --role-name "$role_name_input" \
+    --query 'Role.Arn' \
+    --output text 2>/dev/null || true)"
+
+  if [ -z "$role_arn" ] || [ "$role_arn" = "None" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$role_arn"
+}
+
+resolve_load_balancer_controller_role_arn() {
+  resolve_iam_role_arn \
+    "$LOAD_BALANCER_CONTROLLER_ROLE_ARN" \
+    "$LOAD_BALANCER_CONTROLLER_ROLE_NAME"
+}
+
+resolve_external_secrets_role_arn() {
+  resolve_iam_role_arn \
+    "$EXTERNAL_SECRETS_ROLE_ARN" \
+    "$EXTERNAL_SECRETS_ROLE_NAME"
+}
+
+configure_kubeconfig() {
+  local cluster_status
+
+  cluster_status="$(aws eks describe-cluster \
+    --region "$REGION" \
+    --name "$CLUSTER_NAME" \
+    --query 'cluster.status' \
+    --output text 2>/dev/null || true)"
+
+  if [ "$cluster_status" != "ACTIVE" ]; then
+    log "Cluster '$CLUSTER_NAME' is not active. Current status: $${cluster_status:-unknown}"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$ROOT_KUBECONFIG")"
+  aws eks update-kubeconfig \
+    --region "$REGION" \
+    --name "$CLUSTER_NAME" \
+    --kubeconfig "$ROOT_KUBECONFIG"
+
+  if id "$LINUX_USER" >/dev/null 2>&1; then
+    install -d -o "$LINUX_USER" -g "$LINUX_USER" -m 0755 "$USER_HOME/.kube"
+    sudo -u "$LINUX_USER" env HOME="$USER_HOME" \
+      aws eks update-kubeconfig \
+        --region "$REGION" \
+        --name "$CLUSTER_NAME" \
+        --kubeconfig "$USER_KUBECONFIG"
+  fi
+}
+
+install_load_balancer_controller() {
+  local role_arn="$1"
+
+  export KUBECONFIG="$ROOT_KUBECONFIG"
+
+  if ! kubectl get --raw=/healthz --request-timeout=10s >/dev/null 2>&1; then
+    log "Kubernetes API for '$CLUSTER_NAME' is not reachable."
+    return 1
+  fi
+
+  cat <<MANIFEST | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aws-load-balancer-controller
+  namespace: kube-system
+  annotations:
+    eks.amazonaws.com/role-arn: "$role_arn"
+MANIFEST
+
+  helm repo add eks https://aws.github.io/eks-charts --force-update
+  helm repo update eks
+
+  helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+    --namespace kube-system \
+    --set clusterName="$CLUSTER_NAME" \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name=aws-load-balancer-controller \
+    --set region="$REGION" \
+    --set vpcId="$VPC_ID"
+
+  kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=5m
+}
+
+install_external_secrets() {
+  local role_arn="$1"
+
+  export KUBECONFIG="$ROOT_KUBECONFIG"
+
+  cat <<MANIFEST | kubectl apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: skyline
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+  annotations:
+    eks.amazonaws.com/role-arn: "$role_arn"
+MANIFEST
+
+  helm repo add external-secrets https://charts.external-secrets.io --force-update
+  helm repo update external-secrets
+
+  helm upgrade --install external-secrets external-secrets/external-secrets \
+    --namespace external-secrets \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name=external-secrets
+
+  kubectl rollout status deployment/external-secrets -n external-secrets --timeout=5m
+  kubectl rollout status deployment/external-secrets-webhook -n external-secrets --timeout=5m
+  kubectl rollout status deployment/external-secrets-cert-controller -n external-secrets --timeout=5m
+
+  cat <<MANIFEST | kubectl apply -f -
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: skyline-parameter-store
+  namespace: skyline
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: "$REGION"
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: skyline-db-secret
+  namespace: skyline
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: SecretStore
+    name: skyline-parameter-store
+  target:
+    name: skyline-db-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: DB_HOST
+      remoteRef:
+        key: "$PARAMETER_STORE_PREFIX/database/host"
+    - secretKey: DB_PORT
+      remoteRef:
+        key: "$PARAMETER_STORE_PREFIX/database/port"
+    - secretKey: DB_NAME
+      remoteRef:
+        key: "$PARAMETER_STORE_PREFIX/database/name"
+    - secretKey: DB_USER
+      remoteRef:
+        key: "$PARAMETER_STORE_PREFIX/database/username"
+    - secretKey: DB_PASSWORD
+      remoteRef:
+        key: "$PARAMETER_STORE_PREFIX/database/password"
+MANIFEST
+
+  kubectl wait \
+    --for=create \
+    secret/skyline-db-secret \
+    -n skyline \
+    --timeout=2m
+}
+
+main() {
+  local role_arn
+  local external_secrets_role_arn
+
+  configure_kubeconfig
+
+  role_arn="$(resolve_load_balancer_controller_role_arn || true)"
+  if [ -z "$role_arn" ]; then
+    log "AWS Load Balancer Controller IAM role could not be resolved."
+    exit 1
+  fi
+
+  external_secrets_role_arn="$(resolve_external_secrets_role_arn || true)"
+  if [ -z "$external_secrets_role_arn" ]; then
+    log "External Secrets IAM role could not be resolved."
+    exit 1
+  fi
+
+  install_load_balancer_controller "$role_arn"
+  install_external_secrets "$external_secrets_role_arn"
+  log "Bastion EKS setup completed successfully."
+}
+
+main "$@"
