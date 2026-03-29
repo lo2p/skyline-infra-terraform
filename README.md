@@ -126,6 +126,7 @@ The script will:
 - sync the existing SSM database parameters into the Kubernetes secret `skyline-db-secret`
 
 Parameter Store remains managed by Terraform. The bootstrap script only connects Kubernetes to those existing parameters.
+The database password is stored as a `SecureString`, so the External Secrets IAM role must also be able to call `kms:Decrypt`.
 
 ## Apply Impact
 

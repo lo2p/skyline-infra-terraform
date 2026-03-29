@@ -176,7 +176,7 @@ MANIFEST
   kubectl rollout status deployment/external-secrets-cert-controller -n external-secrets --timeout=5m
 
   cat <<MANIFEST | kubectl apply -f -
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: SecretStore
 metadata:
   name: skyline-parameter-store
@@ -187,7 +187,7 @@ spec:
       service: ParameterStore
       region: "$REGION"
 ---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: skyline-db-secret

@@ -299,6 +299,14 @@ data "aws_iam_policy_document" "external_secrets" {
       "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${local.parameter_store_path}/*"
     ]
   }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt"
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_policy" "external_secrets" {
