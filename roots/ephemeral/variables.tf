@@ -27,8 +27,9 @@ variable "private_db_subnet_cidrs" {
 }
 
 variable "eks_public_access_cidrs" {
-  description = "CIDR blocks allowed to access the EKS public endpoint."
+  description = "CIDR blocks allowed to access the EKS public endpoint when enabled."
   type        = list(string)
+  default     = []
 }
 
 variable "parameter_store_prefix" {

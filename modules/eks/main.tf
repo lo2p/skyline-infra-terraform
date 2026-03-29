@@ -45,8 +45,7 @@ resource "aws_eks_cluster" "this" {
   vpc_config {
     subnet_ids              = var.private_subnet_ids
     endpoint_private_access = true
-    endpoint_public_access  = true
-    public_access_cidrs     = var.eks_public_access_cidrs
+    endpoint_public_access  = false
   }
 
   depends_on = [aws_iam_role_policy_attachment.cluster_policy]
